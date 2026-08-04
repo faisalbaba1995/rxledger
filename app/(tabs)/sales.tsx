@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, FlatList, ScrollView, KeyboardAvoidingView,
-  Platform, StyleSheet, Alert,
+  Platform, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -16,6 +16,8 @@ import { useInventory } from '../../src/hooks/useInventory';
 import { useSaleCart } from '../../src/hooks/useSaleCart';
 import { useResponsiveLayout } from '../../src/hooks/useResponsiveLayout';
 import { createInventorySearchEngine } from '../../src/utils/fuzzySearch';
+import { extractMedicineDetails } from '../../src/lib/ocrService';
+import type { OcrResult } from '../../src/lib/ocrService';
 import type { BatchRecordRow } from '../../src/types/database';
 import type { InventoryDisplayItem } from '../../src/hooks/useInventory';
 
@@ -28,6 +30,8 @@ export default function SalesScreen() {
 
   // ── Camera state
   const [showCamera, setShowCamera] = useState(false);
+  const [ocrProcessing, setOcrProcessing] = useState(false);
+  const [lastOcrResult, setLastOcrResult] = useState<OcrResult | null>(null);
 
   // ── Search engine (rebuild when items change)
   const searchEngine = useMemo(() => {
@@ -112,14 +116,65 @@ export default function SalesScreen() {
     }
   }, [submitSale, refreshInv, total]);
 
-  // ── Camera capture handler (stores photo URI for future OCR)
-  const handleCameraCapture = useCallback((uri: string) => {
+  // ── Camera capture handler → sends to Gemini OCR
+  const handleCameraCapture = useCallback(async (uri: string, base64: string) => {
     setShowCamera(false);
-    // For now, show the captured photo URI — OCR integration comes in Phase 3D
-    Alert.alert(
-      '📷 Photo Captured',
-      'Camera is working! OCR pipeline will be wired in Phase 3D to auto-extract batch & expiry info from the captured image.',
-    );
+    setOcrProcessing(true);
+    setLastOcrResult(null);
+
+    try {
+      const result = await extractMedicineDetails(base64);
+      setLastOcrResult(result);
+
+      Haptics.notificationAsync(
+        result.confident
+          ? Haptics.NotificationFeedbackType.Success
+          : Haptics.NotificationFeedbackType.Warning
+      );
+
+      // Build a human-readable summary
+      const lines: string[] = [];
+      if (result.medicineName) lines.push(`💊  Medicine: ${result.medicineName}`);
+      if (result.batchNumber) lines.push(`🏷️  Batch: ${result.batchNumber}`);
+      if (result.expiryDate) lines.push(`📅  Expiry: ${result.expiryDate}`);
+      if (result.mrp) lines.push(`💰  MRP: ₹${result.mrp}`);
+      if (result.composition) lines.push(`🧪  Composition: ${result.composition}`);
+
+      if (lines.length === 0) {
+        lines.push('Could not extract medicine details from this image.');
+        lines.push('');
+        lines.push('Tips:');
+        lines.push('• Hold the camera steady and close to the text');
+        lines.push('• Ensure good lighting');
+        lines.push('• Make sure the medicine name and batch info are in frame');
+      }
+
+      if (!result.confident && lines.length > 0) {
+        lines.push('');
+        lines.push('⚠️ Low confidence — some fields may be inaccurate.');
+      }
+
+      Alert.alert(
+        result.confident ? '✅ Medicine Detected' : '📷 Scan Result',
+        lines.join('\n'),
+        [
+          { text: 'Scan Again', onPress: () => setShowCamera(true) },
+          {
+            text: result.medicineName ? 'Search This' : 'OK',
+            onPress: () => {
+              if (result.medicineName) {
+                setQuery(result.medicineName);
+              }
+            },
+          },
+        ],
+      );
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('OCR Error', 'Failed to process the image. Please try again.');
+    } finally {
+      setOcrProcessing(false);
+    }
   }, []);
 
   // ── Camera modal (phone) or inline rendering
@@ -140,14 +195,28 @@ export default function SalesScreen() {
 
       {/* Camera scan button */}
       <PrimaryButton
-        label="📷 Scan Medicine Strip"
+        label={ocrProcessing ? '🔍 Analyzing...' : '📷 Scan Medicine Strip'}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           setShowCamera(true);
         }}
         variant="ghost"
         style={styles.scanBtn}
+        disabled={ocrProcessing}
       />
+
+      {/* OCR Processing overlay */}
+      {ocrProcessing && (
+        <View style={styles.ocrProcessingBox}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.ocrProcessingText}>
+            Analyzing medicine strip with AI...
+          </Text>
+          <Text style={styles.ocrProcessingHint}>
+            This usually takes 2-3 seconds
+          </Text>
+        </View>
+      )}
 
       <SearchInput value={query} onChangeText={setQuery} placeholder="Search medicine..." />
 
@@ -319,6 +388,28 @@ const styles = StyleSheet.create({
   scanBtn: {
     marginBottom: SPACING.md,
     borderColor: COLORS.primary,
+  },
+
+  ocrProcessingBox: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    padding: SPACING.xl,
+    marginBottom: SPACING.md,
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  ocrProcessingText: {
+    fontSize: FONT.medium,
+    fontWeight: '700',
+    color: COLORS.primary,
+    textAlign: 'center',
+  },
+  ocrProcessingHint: {
+    fontSize: FONT.base,
+    color: COLORS.textDim,
+    textAlign: 'center',
   },
 
   dropdown: {

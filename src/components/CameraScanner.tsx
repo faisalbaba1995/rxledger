@@ -26,8 +26,8 @@ import { PrimaryButton } from './PrimaryButton';
 // ─── Props ──────────────────────────────────────────────────────────
 
 interface CameraScannerProps {
-  /** Called when a photo is captured. Receives the local file URI. */
-  onCapture: (uri: string) => void;
+  /** Called when a photo is captured. Receives the local file URI and base64 data. */
+  onCapture: (uri: string, base64: string) => void;
   /** Called when the user dismisses the camera (phone modal mode). */
   onClose: () => void;
   /** Whether to render as a full-screen modal (phone) or inline (tablet). */
@@ -42,6 +42,7 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
   const [facing, setFacing] = useState<CameraType>('back');
   const [capturing, setCapturing] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [previewBase64, setPreviewBase64] = useState<string | null>(null);
 
   // ── Toggle front / back camera
   const toggleFacing = useCallback(() => {
@@ -59,12 +60,13 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
     try {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.7,
-        base64: false,
+        base64: true,
         skipProcessing: true,
       });
 
       if (photo) {
         setPreviewUri(photo.uri);
+        setPreviewBase64(photo.base64 ?? null);
       }
     } catch (err) {
       console.error('Camera capture error:', err);
@@ -75,17 +77,19 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
 
   // ── Confirm the captured photo
   const handleConfirm = useCallback(() => {
-    if (previewUri) {
+    if (previewUri && previewBase64) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onCapture(previewUri);
+      onCapture(previewUri, previewBase64);
       setPreviewUri(null);
+      setPreviewBase64(null);
     }
-  }, [previewUri, onCapture]);
+  }, [previewUri, previewBase64, onCapture]);
 
   // ── Retake photo
   const handleRetake = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setPreviewUri(null);
+    setPreviewBase64(null);
   }, []);
 
   // ── Permission states
