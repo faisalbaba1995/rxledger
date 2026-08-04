@@ -147,22 +147,25 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
           />
         </View>
       ) : (
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing={facing}
-        >
-          {/* Viewfinder overlay */}
-          <View style={styles.viewfinder}>
-            <View style={styles.viewfinderCornerTL} />
-            <View style={styles.viewfinderCornerTR} />
-            <View style={styles.viewfinderCornerBL} />
-            <View style={styles.viewfinderCornerBR} />
+        <View style={styles.cameraWrap}>
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing={facing}
+          />
+          {/* Viewfinder overlay — positioned as sibling, not child of CameraView */}
+          <View style={[StyleSheet.absoluteFill, styles.viewfinderOverlay]} pointerEvents="none">
+            <View style={styles.viewfinder}>
+              <View style={styles.viewfinderCornerTL} />
+              <View style={styles.viewfinderCornerTR} />
+              <View style={styles.viewfinderCornerBL} />
+              <View style={styles.viewfinderCornerBR} />
+            </View>
+            <Text style={styles.viewfinderHint}>
+              Align medicine strip text within the frame
+            </Text>
           </View>
-          <Text style={styles.viewfinderHint}>
-            Align medicine strip text within the frame
-          </Text>
-        </CameraView>
+        </View>
       )}
 
       {/* Bottom controls */}
@@ -311,9 +314,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Camera
-  camera: {
+  // Camera wrapper (camera + overlay as siblings)
+  cameraWrap: {
     flex: 1,
+    position: 'relative',
+  },
+
+  // Overlay on top of camera (absolute fill)
+  viewfinderOverlay: {
     justifyContent: 'flex-end',
     alignItems: 'center',
   },
