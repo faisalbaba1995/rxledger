@@ -3,7 +3,7 @@
     "name": "RxLedger",
     "slug": "rxledger",
     "version": "1.0.0",
-    "orientation": "landscape",
+    "orientation": "default",
     "scheme": "rxledger",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -25,7 +25,13 @@
     },
     "plugins": [
       "expo-router",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "RxLedger needs camera access to scan medicine strips for batch and expiry information."
+        }
+      ]
     ]
   }
 }

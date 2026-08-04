@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { COLORS, FONT, SPACING, RADIUS, TOUCH_TARGET_MIN } from '../../src/constants/theme';
 import { ListRow } from '../../src/components/ListRow';
 import { useInventory } from '../../src/hooks/useInventory';
@@ -11,6 +12,7 @@ export default function StockScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const toggleExpand = useCallback((id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 

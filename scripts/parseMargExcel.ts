@@ -12,6 +12,11 @@
  * Usage:
  *   npx tsx scripts/parseMargExcel.ts ./path/to/marg-export.xlsx
  *   npx tsx scripts/parseMargExcel.ts ./path/to/marg-export.xlsx --out ./parsed.json
+ *   npx tsx scripts/parseMargExcel.ts ./path/to/marg-export.xlsx --upload
+ *
+ * The --upload flag requires a .env file in ./scripts/ (or project root) with:
+ *   SUPABASE_URL=https://xxx.supabase.co
+ *   SUPABASE_SERVICE_ROLE_KEY=eyJ...
  *
  * Requirements:  exceljs (install: npm i exceljs)
  *                tsx      (install: npm i -D tsx)  — or ts-node
@@ -20,14 +25,20 @@
 import { Workbook, type CellValue, type Row } from 'exceljs';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { config as loadEnv } from 'dotenv';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   InventoryItemInsert,
   BatchRecordInsert,
 } from '../src/types/database';
 
+// Load .env from scripts/ directory first, then project root fallback
+loadEnv({ path: path.resolve(__dirname, '.env') });
+loadEnv({ path: path.resolve(__dirname, '..', '.env') });
+
 // ─── CLI argument parsing ───────────────────────────────────────────
 
-function resolveArgs(): { inputPath: string; outputPath: string | null } {
+function resolveArgs(): { inputPath: string; outputPath: string | null; upload: boolean } {
   const args = process.argv.slice(2);
 
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
@@ -35,16 +46,20 @@ function resolveArgs(): { inputPath: string; outputPath: string | null } {
   Marg Excel Parser — Pharmacy Vision Ledger
 
   USAGE
-    npx tsx scripts/parseMargExcel.ts <input.xlsx> [--out <output.json>]
+    npx tsx scripts/parseMargExcel.ts <input.xlsx> [--out <output.json>] [--upload]
 
   ARGUMENTS
     <input.xlsx>        Path to the Marg ERP export spreadsheet.
     --out <output.json> Optional. Write parsed data to a JSON file
                         instead of stdout.
+    --upload            Upload parsed data directly to Supabase.
+                        Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+                        in scripts/.env or project root .env
 
   EXAMPLES
     npx tsx scripts/parseMargExcel.ts ./data/marg-june.xlsx
     npx tsx scripts/parseMargExcel.ts ./data/marg-june.xlsx --out ./parsed.json
+    npx tsx scripts/parseMargExcel.ts ./data/marg-june.xlsx --upload
 `);
     process.exit(0);
   }
@@ -55,8 +70,9 @@ function resolveArgs(): { inputPath: string; outputPath: string | null } {
     outIdx !== -1 && args[outIdx + 1]
       ? path.resolve(args[outIdx + 1])
       : null;
+  const upload = args.includes('--upload');
 
-  return { inputPath, outputPath };
+  return { inputPath, outputPath, upload };
 }
 
 // ─── Cell value helpers ─────────────────────────────────────────────
@@ -298,10 +314,132 @@ async function parseWorkbook(filePath: string): Promise<ParseResult> {
   };
 }
 
+// ─── Supabase Upload ────────────────────────────────────────────────
+
+async function uploadToSupabase(result: ParseResult): Promise<void> {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.error(
+      '✗ Missing Supabase credentials for --upload.\n' +
+      '  Create scripts/.env with:\n' +
+      '    SUPABASE_URL=https://xxx.supabase.co\n' +
+      '    SUPABASE_SERVICE_ROLE_KEY=eyJ...\n'
+    );
+    process.exit(1);
+  }
+
+  const supabase: SupabaseClient = createClient(supabaseUrl, supabaseKey);
+
+  // ── Step 1: Upsert inventory_items ────────────────────────────────
+  console.log('\n⬆  Uploading inventory items...');
+
+  const BATCH_SIZE = 100;
+  let itemsUpserted = 0;
+
+  for (let i = 0; i < result.inventoryItems.length; i += BATCH_SIZE) {
+    const batch = result.inventoryItems.slice(i, i + BATCH_SIZE);
+
+    const { error } = await supabase
+      .from('inventory_items')
+      .upsert(
+        batch.map((item) => ({
+          item_name: item.item_name,
+          composition: item.composition,
+          base_unit_size: item.base_unit_size,
+        })),
+        { onConflict: 'item_name' }
+      );
+
+    if (error) {
+      console.error(`✗ Failed to upsert inventory items (batch ${i}):`, error.message);
+      process.exit(1);
+    }
+
+    itemsUpserted += batch.length;
+    process.stdout.write(`\r   ${itemsUpserted}/${result.inventoryItems.length} items`);
+  }
+  console.log(' ✓');
+
+  // ── Step 2: Fetch item IDs for FK resolution ──────────────────────
+  console.log('   Fetching item IDs for FK resolution...');
+
+  const { data: allItems, error: fetchErr } = await supabase
+    .from('inventory_items')
+    .select('id, item_name');
+
+  if (fetchErr || !allItems) {
+    console.error('✗ Failed to fetch inventory items:', fetchErr?.message);
+    process.exit(1);
+  }
+
+  // Build name → id lookup (case-insensitive)
+  const nameToId = new Map<string, string>();
+  for (const item of allItems as { id: string; item_name: string }[]) {
+    nameToId.set(item.item_name.toUpperCase(), item.id);
+  }
+
+  // ── Step 3: Upsert batch_records ──────────────────────────────────
+  console.log('⬆  Uploading batch records...');
+
+  let batchesUpserted = 0;
+  let batchesSkipped = 0;
+
+  for (let i = 0; i < result.batchRecords.length; i += BATCH_SIZE) {
+    const chunk = result.batchRecords.slice(i, i + BATCH_SIZE);
+
+    // Resolve item_id from _item_name_ref
+    const resolved = chunk
+      .map((br) => {
+        const itemId = nameToId.get(br._item_name_ref.toUpperCase());
+        if (!itemId) {
+          batchesSkipped++;
+          return null;
+        }
+        return {
+          item_id: itemId,
+          batch_number: br.batch_number,
+          mrp: br.mrp,
+          purchase_rate: br.purchase_rate,
+          expiry_date: br.expiry_date,
+          current_stock: br.current_stock,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    if (resolved.length === 0) continue;
+
+    const { error } = await supabase
+      .from('batch_records')
+      .upsert(resolved, {
+        onConflict: 'item_id,batch_number',
+      });
+
+    if (error) {
+      console.error(`✗ Failed to upsert batch records (chunk ${i}):`, error.message);
+      process.exit(1);
+    }
+
+    batchesUpserted += resolved.length;
+    process.stdout.write(`\r   ${batchesUpserted}/${result.batchRecords.length} batches`);
+  }
+  console.log(' ✓');
+
+  if (batchesSkipped > 0) {
+    console.warn(`⚠  ${batchesSkipped} batch records skipped (no matching item ID)`);
+  }
+
+  console.log('\n════════════════════════════════════════');
+  console.log(`  ✓ Upload complete!`);
+  console.log(`    ${itemsUpserted} items + ${batchesUpserted} batches → Supabase`);
+  console.log('════════════════════════════════════════\n');
+}
+
 // ─── Entrypoint ─────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const { inputPath, outputPath } = resolveArgs();
+  const { inputPath, outputPath, upload } = resolveArgs();
 
   if (!fs.existsSync(inputPath)) {
     console.error(`✗ File not found: ${inputPath}`);
@@ -329,6 +467,13 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── Upload to Supabase if --upload flag is present
+  if (upload) {
+    await uploadToSupabase(result);
+    return;
+  }
+
+  // ── Otherwise output JSON
   const output = JSON.stringify(
     {
       inventoryItems: result.inventoryItems,
