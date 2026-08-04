@@ -20,6 +20,8 @@ import { extractMedicineDetails } from '../../src/lib/ocrService';
 import type { OcrResult } from '../../src/lib/ocrService';
 import type { BatchRecordRow } from '../../src/types/database';
 import type { InventoryDisplayItem } from '../../src/hooks/useInventory';
+import { OcrReviewModal } from '../../src/components/OcrReviewModal';
+import type { FinalOcrData } from '../../src/components/OcrReviewModal';
 
 const QTY_OPTIONS = ['FULL STRIP', 'LOOSE'] as const;
 
@@ -117,58 +119,14 @@ export default function SalesScreen() {
   }, [submitSale, refreshInv, total]);
 
   // ── Camera capture handler → sends to Gemini OCR
-  const handleCameraCapture = useCallback(async (uri: string, base64: string) => {
+  const handleCameraCapture = useCallback(async (uris: string[], base64s: string[]) => {
     setShowCamera(false);
     setOcrProcessing(true);
     setLastOcrResult(null);
 
     try {
-      const result = await extractMedicineDetails(base64);
+      const result = await extractMedicineDetails(base64s);
       setLastOcrResult(result);
-
-      Haptics.notificationAsync(
-        result.confident
-          ? Haptics.NotificationFeedbackType.Success
-          : Haptics.NotificationFeedbackType.Warning
-      );
-
-      // Build a human-readable summary
-      const lines: string[] = [];
-      if (result.medicineName) lines.push(`💊  Medicine: ${result.medicineName}`);
-      if (result.batchNumber) lines.push(`🏷️  Batch: ${result.batchNumber}`);
-      if (result.expiryDate) lines.push(`📅  Expiry: ${result.expiryDate}`);
-      if (result.mrp) lines.push(`💰  MRP: ₹${result.mrp}`);
-      if (result.composition) lines.push(`🧪  Composition: ${result.composition}`);
-
-      if (lines.length === 0) {
-        lines.push('Could not extract medicine details from this image.');
-        lines.push('');
-        lines.push('Tips:');
-        lines.push('• Hold the camera steady and close to the text');
-        lines.push('• Ensure good lighting');
-        lines.push('• Make sure the medicine name and batch info are in frame');
-      }
-
-      if (!result.confident && lines.length > 0) {
-        lines.push('');
-        lines.push('⚠️ Low confidence — some fields may be inaccurate.');
-      }
-
-      Alert.alert(
-        result.confident ? '✅ Medicine Detected' : '📷 Scan Result',
-        lines.join('\n'),
-        [
-          { text: 'Scan Again', onPress: () => setShowCamera(true) },
-          {
-            text: result.medicineName ? 'Search This' : 'OK',
-            onPress: () => {
-              if (result.medicineName) {
-                setQuery(result.medicineName);
-              }
-            },
-          },
-        ],
-      );
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('OCR Error', 'Failed to process the image. Please try again.');
@@ -176,6 +134,32 @@ export default function SalesScreen() {
       setOcrProcessing(false);
     }
   }, []);
+
+  // ── Handle acceptance of OCR data from the review modal
+  const handleOcrAccept = useCallback((data: FinalOcrData, inventoryId: string, batchId: string) => {
+    // We construct a mock BatchRecordRow to pass to addItem
+    const batchRow: BatchRecordRow = {
+      id: batchId,
+      item_id: inventoryId,
+      batch_number: data.batchNumber,
+      expiry_date: data.expiryDate,
+      mrp: data.mrp,
+      purchase_rate: String((parseFloat(data.mrp) || 0) * 0.7),
+      current_stock: 0,
+    };
+
+    addItem(
+      batchRow,
+      data.medicineName,
+      10, // Default base_unit_size
+      data.qty,
+      'FULL_STRIP'
+    );
+
+    setLastOcrResult(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    refreshInv(); // Refresh inventory to pull in the new item
+  }, [addItem, refreshInv]);
 
   // ── Camera modal (phone) or inline rendering
   if (showCamera) {
@@ -307,6 +291,13 @@ export default function SalesScreen() {
   const cartPanel = (
     <View style={isPhone ? styles.fullCol : styles.rightCol}>
       <Text style={styles.header}>Cart</Text>
+
+        <OcrReviewModal
+          visible={!!lastOcrResult}
+          ocrResult={lastOcrResult}
+          onAccept={handleOcrAccept}
+          onCancel={() => setLastOcrResult(null)}
+        />
 
       {cart.length === 0 ? (
         <Text style={styles.hint}>No items added yet</Text>

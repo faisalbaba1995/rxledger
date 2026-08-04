@@ -27,8 +27,8 @@ import { PrimaryButton } from './PrimaryButton';
 // ─── Props ──────────────────────────────────────────────────────────
 
 interface CameraScannerProps {
-  /** Called when a photo is captured. Receives the local file URI and base64 data. */
-  onCapture: (uri: string, base64: string) => void;
+  /** Called when a photo is captured. Receives arrays of URIs and base64 data for front/back. */
+  onCapture: (uris: string[], base64s: string[]) => void;
   /** Called when the user dismisses the camera (phone modal mode). */
   onClose: () => void;
   /** Whether to render as a full-screen modal (phone) or inline (tablet). */
@@ -42,6 +42,12 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
   const [capturing, setCapturing] = useState(false);
+  
+  // Step state
+  const [captureStep, setCaptureStep] = useState<'front' | 'back'>('front');
+  const [frontImage, setFrontImage] = useState<{ uri: string; base64: string } | null>(null);
+
+  // Current preview state
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewBase64, setPreviewBase64] = useState<string | null>(null);
 
@@ -87,11 +93,24 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
   const handleConfirm = useCallback(() => {
     if (previewUri && previewBase64) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onCapture(previewUri, previewBase64);
-      setPreviewUri(null);
-      setPreviewBase64(null);
+      
+      if (captureStep === 'front') {
+        // Move to step 2 (Back)
+        setFrontImage({ uri: previewUri, base64: previewBase64 });
+        setPreviewUri(null);
+        setPreviewBase64(null);
+        setCaptureStep('back');
+      } else {
+        // Complete capture (Front + Back)
+        if (frontImage) {
+          onCapture(
+            [frontImage.uri, previewUri],
+            [frontImage.base64, previewBase64]
+          );
+        }
+      }
     }
-  }, [previewUri, previewBase64, onCapture]);
+  }, [previewUri, previewBase64, captureStep, frontImage, onCapture]);
 
   // ── Retake photo
   const handleRetake = useCallback(() => {
@@ -140,7 +159,11 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
           <Text style={styles.closeBtnText}>✕</Text>
         </Pressable>
         <Text style={styles.topBarTitle}>
-          {previewUri ? 'Preview' : 'Scan Medicine Strip'}
+          {previewUri 
+            ? 'Review Photo' 
+            : captureStep === 'front' 
+              ? 'Step 1: Scan Front' 
+              : 'Step 2: Scan Back'}
         </Text>
         <View style={styles.closeBtn} />
       </View>
@@ -170,7 +193,9 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
               <View style={styles.viewfinderCornerBR} />
             </View>
             <Text style={styles.viewfinderHint}>
-              Align medicine strip text within the frame
+              {captureStep === 'front'
+                ? 'Align front (Brand Name) within frame'
+                : 'Align back (Batch/Expiry) within frame'}
             </Text>
           </View>
         </View>

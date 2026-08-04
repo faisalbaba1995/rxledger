@@ -33,9 +33,9 @@ export interface OcrResult {
 const GEMINI_API_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent';
 
-const PHARMACY_PROMPT = `You are an expert pharmacy OCR system. Analyze this photo of a medicine strip or medicine packaging.
+const PHARMACY_PROMPT = `You are an expert pharmacy OCR system. Analyze these photos of the front and back of a medicine strip/box.
 
-Extract the following information ONLY if clearly visible in the image:
+Extract the following information by cross-referencing both images:
 1. Medicine Name (the brand name or generic name)
 2. Batch Number (often labeled as "B.No", "Batch No", "Lot")
 3. Expiry Date (often labeled as "Exp", "Expiry", "Use Before")
@@ -65,14 +65,14 @@ const MAX_RETRIES = 3;
 // ─── Service ────────────────────────────────────────────────────────
 
 /**
- * Sends a base64 image to Gemini Vision and extracts medicine details.
+ * Sends base64 images to Gemini Vision and extracts medicine details.
  *
- * @param base64Image  Raw base64 string (NO data URI prefix).
+ * @param base64Images Array of raw base64 strings (NO data URI prefix).
  * @param mimeType     MIME type, defaults to "image/jpeg".
  * @returns            Parsed OCR result.
  */
 export async function extractMedicineDetails(
-  base64Image: string,
+  base64Images: string[],
   mimeType: string = 'image/jpeg',
 ): Promise<OcrResult> {
   const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
@@ -94,12 +94,12 @@ export async function extractMedicineDetails(
       {
         parts: [
           { text: PHARMACY_PROMPT },
-          {
+          ...base64Images.map((data) => ({
             inlineData: {
               mimeType,
-              data: base64Image,
+              data,
             },
-          },
+          })),
         ],
       },
     ],
