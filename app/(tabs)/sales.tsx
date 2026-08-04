@@ -137,14 +137,17 @@ export default function SalesScreen() {
 
   // ── Handle acceptance of OCR data from the review modal
   const handleOcrAccept = useCallback((data: FinalOcrData, inventoryId: string, batchId: string) => {
+    const cleanMrpForBatch = String(data.mrp).replace(/[^\d.]/g, '');
+    const mrpNum = parseFloat(cleanMrpForBatch) || 0;
+    
     // We construct a mock BatchRecordRow to pass to addItem
     const batchRow: BatchRecordRow = {
       id: batchId,
       item_id: inventoryId,
       batch_number: data.batchNumber,
       expiry_date: data.expiryDate,
-      mrp: data.mrp,
-      purchase_rate: String((parseFloat(data.mrp) || 0) * 0.7),
+      mrp: cleanMrpForBatch || '0',
+      purchase_rate: String(mrpNum * 0.7),
       current_stock: 0,
     };
 
@@ -302,11 +305,10 @@ export default function SalesScreen() {
       {cart.length === 0 ? (
         <Text style={styles.hint}>No items added yet</Text>
       ) : (
-        <FlatList
-          data={cart}
-          keyExtractor={(_, i) => String(i)}
-          renderItem={({ item, index }) => (
+        <View style={isPhone ? undefined : styles.cartList}>
+          {cart.map((item, index) => (
             <ListRow
+              key={index}
               title={item.itemName}
               subtitle={`${item.quantityType === 'FULL_STRIP' ? 'Strip' : 'Loose'} × ${item.quantity}`}
               rightLabel={`₹${item.priceCharged}`}
@@ -315,9 +317,8 @@ export default function SalesScreen() {
                 removeItem(index);
               }}
             />
-          )}
-          style={isPhone ? undefined : styles.cartList}
-        />
+          ))}
+        </View>
       )}
 
       <View style={styles.totalBar}>

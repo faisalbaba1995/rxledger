@@ -40,24 +40,28 @@ export interface UseSaleCartReturn {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 function computePrice(
-  mrp: string,
+  mrp: string | number,
   baseUnitSize: number,
   quantity: number,
   quantityType: QuantityType,
 ): string {
-  const mrpNum = parseFloat(mrp);
+  // Strip non-numeric chars (e.g. currency symbols) and fallback to 0
+  const cleanMrp = String(mrp ?? 0).replace(/[^\d.]/g, '');
+  const mrpNum = parseFloat(cleanMrp) || 0;
+  const safeQty = quantity || 0;
+  const safeSize = baseUnitSize || 10;
 
   if (quantityType === 'FULL_STRIP') {
-    return (mrpNum * quantity).toFixed(2);
+    return (mrpNum * safeQty).toFixed(2);
   }
 
   // LOOSE — price per individual unit × quantity
-  return ((mrpNum / baseUnitSize) * quantity).toFixed(2);
+  return ((mrpNum / safeSize) * safeQty).toFixed(2);
 }
 
 function computeTotal(cart: CartItem[]): string {
   return cart
-    .reduce((sum, item) => sum + parseFloat(item.priceCharged), 0)
+    .reduce((sum, item) => sum + (parseFloat(item.priceCharged) || 0), 0)
     .toFixed(2);
 }
 

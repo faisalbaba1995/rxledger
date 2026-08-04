@@ -134,15 +134,18 @@ function parseExpiryDate(dateStr: string): string {
       if (existingBatches && existingBatches.length > 0) {
         batchId = existingBatches[0].id;
       } else {
+        const cleanMrp = String(mrp).replace(/[^\d.]/g, '');
+        const mrpNum = parseFloat(cleanMrp) || 0;
+
         // Create new batch record
         const { data: newBatch, error: batchError } = await supabase
           .from('batch_records')
           .insert({
             item_id: inventoryId,
-            batch_number: batch.trim(),
-            expiry_date: parseExpiryDate(expiry), // Parse it securely
-            mrp: parseFloat(mrp) || 0,
-            purchase_rate: (parseFloat(mrp) || 0) * 0.7, // Estimate PTR
+            batch_number: String(batch).trim(),
+            expiry_date: parseExpiryDate(String(expiry)), // Parse it securely
+            mrp: mrpNum,
+            purchase_rate: mrpNum * 0.7, // Estimate PTR
             current_stock: 0, // Will be sold immediately
           })
           .select('id')
@@ -152,13 +155,14 @@ function parseExpiryDate(dateStr: string): string {
         batchId = newBatch.id;
       }
 
+      const cleanMrpForData = String(mrp).replace(/[^\d.]/g, '');
       const finalData: FinalOcrData = {
-        medicineName: name.trim(),
-        batchNumber: batch.trim(),
-        expiryDate: expiry.trim(),
-        mrp: mrp.trim(),
-        composition: composition.trim(),
-        qty: parseInt(qty, 10) || 1,
+        medicineName: String(name).trim(),
+        batchNumber: String(batch).trim(),
+        expiryDate: String(expiry).trim(),
+        mrp: cleanMrpForData || '0',
+        composition: String(composition).trim(),
+        qty: parseInt(String(qty), 10) || 1,
       };
 
       onAccept(finalData, inventoryId, batchId);
