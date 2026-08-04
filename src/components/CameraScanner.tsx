@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { COLORS, FONT, SPACING, RADIUS, TOUCH_TARGET_MIN } from '../constants/theme';
 import { PrimaryButton } from './PrimaryButton';
 
@@ -59,14 +60,21 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.7,
-        base64: true,
+        quality: 1,
+        base64: false,
         skipProcessing: true,
       });
 
       if (photo) {
-        setPreviewUri(photo.uri);
-        setPreviewBase64(photo.base64 ?? null);
+        // Downscale image to dramatically reduce base64 payload size (avoids 429 quota/payload limits)
+        const manipResult = await ImageManipulator.manipulateAsync(
+          photo.uri,
+          [{ resize: { width: 1024 } }],
+          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        );
+
+        setPreviewUri(manipResult.uri);
+        setPreviewBase64(manipResult.base64 ?? null);
       }
     } catch (err) {
       console.error('Camera capture error:', err);

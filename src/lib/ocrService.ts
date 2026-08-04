@@ -31,7 +31,7 @@ export interface OcrResult {
 // ─── Constants ──────────────────────────────────────────────────────
 
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
 
 const PHARMACY_PROMPT = `You are an expert pharmacy OCR system. Analyze this photo of a medicine strip or medicine packaging.
 
@@ -53,6 +53,14 @@ RESPOND WITH ONLY VALID JSON in this exact format, nothing else:
 
 If you cannot read a field, set it to null. Do NOT guess or hallucinate values.
 If the image is not a medicine strip, return all fields as null.`;
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+/** Sleep for the given number of milliseconds. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Maximum number of retries on 429 rate-limit errors. */
+const MAX_RETRIES = 3;
 
 // ─── Service ────────────────────────────────────────────────────────
 
@@ -81,41 +89,58 @@ export async function extractMedicineDetails(
     };
   }
 
-  try {
-    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
+  const requestBody = JSON.stringify({
+    contents: [
+      {
+        parts: [
+          { text: PHARMACY_PROMPT },
           {
-            parts: [
-              { text: PHARMACY_PROMPT },
-              {
-                inlineData: {
-                  mimeType,
-                  data: base64Image,
-                },
-              },
-            ],
+            inlineData: {
+              mimeType,
+              data: base64Image,
+            },
           },
         ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 512,
-        },
-      }),
-    });
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 512,
+    },
+  });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Gemini API error:', response.status, errorText);
+  try {
+    let response: Response | null = null;
+
+    // Retry loop for 429 rate-limit errors
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+      });
+
+      if (response.status === 429 && attempt < MAX_RETRIES) {
+        // Exponential backoff: 3s, 6s, 12s
+        const delay = 3000 * Math.pow(2, attempt);
+        console.warn(`Rate limited (429). Retrying in ${delay / 1000}s... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        await sleep(delay);
+        continue;
+      }
+
+      break; // Success or non-retryable error
+    }
+
+    if (!response || !response.ok) {
+      const errorText = response ? await response.text() : 'No response';
+      console.error('Gemini API error:', response?.status, errorText);
       return {
         medicineName: null,
         batchNumber: null,
         expiryDate: null,
         mrp: null,
         composition: null,
-        rawText: `API Error ${response.status}: ${errorText.slice(0, 200)}`,
+        rawText: `API Error ${response?.status ?? 'unknown'}: ${errorText.slice(0, 200)}`,
         confident: false,
       };
     }
