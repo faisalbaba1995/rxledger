@@ -104,6 +104,33 @@ export function OcrReviewModal({ visible, ocrResult, onAccept, onCancel }: OcrRe
         .eq('batch_number', batch.trim())
         .limit(1);
 
+// Helper to parse MM/YYYY or YYYY-MM-DD into a valid Postgres DATE (YYYY-MM-DD)
+function parseExpiryDate(dateStr: string): string {
+  const clean = dateStr.trim();
+  if (!clean) return '2099-12-31';
+
+  // Match MM/YYYY or MM-YYYY or MM/YY
+  const mmYyyyMatch = clean.match(/^(\d{1,2})[\/\-](\d{2}|\d{4})$/);
+  if (mmYyyyMatch) {
+    const month = mmYyyyMatch[1].padStart(2, '0');
+    let year = mmYyyyMatch[2];
+    if (year.length === 2) year = '20' + year;
+    return `${year}-${month}-01`; // Use first day of the month as a safe default
+  }
+  
+  // Try YYYY-MM-DD or YYYY/MM/DD
+  const yyyyMmDdMatch = clean.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (yyyyMmDdMatch) {
+    const year = yyyyMmDdMatch[1];
+    const month = yyyyMmDdMatch[2].padStart(2, '0');
+    const day = yyyyMmDdMatch[3].padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  // Fallback if we can't parse it
+  return '2099-12-31';
+}
+
       if (existingBatches && existingBatches.length > 0) {
         batchId = existingBatches[0].id;
       } else {
@@ -113,7 +140,7 @@ export function OcrReviewModal({ visible, ocrResult, onAccept, onCancel }: OcrRe
           .insert({
             item_id: inventoryId,
             batch_number: batch.trim(),
-            expiry_date: expiry.trim() || '2099-12-31', // Fallback
+            expiry_date: parseExpiryDate(expiry), // Parse it securely
             mrp: parseFloat(mrp) || 0,
             purchase_rate: (parseFloat(mrp) || 0) * 0.7, // Estimate PTR
             current_stock: 0, // Will be sold immediately

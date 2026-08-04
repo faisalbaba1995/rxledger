@@ -1,13 +1,3 @@
-/**
- * CameraScanner — Camera capture component for medicine strip scanning.
- *
- * Features:
- *   - Front / back camera toggle
- *   - Capture photo → returns base64 for OCR processing
- *   - Haptic feedback on capture
- *   - Responsive: full-screen modal on phone, inline pane on tablet
- */
-
 import React, { useRef, useState, useCallback } from 'react';
 import {
   View,
@@ -21,21 +11,19 @@ import {
 import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { COLORS, FONT, SPACING, RADIUS, TOUCH_TARGET_MIN } from '../constants/theme';
+import { COLORS, FONT, SPACING, RADIUS } from '../constants/theme';
 import { PrimaryButton } from './PrimaryButton';
 
-// ─── Props ──────────────────────────────────────────────────────────
-
-interface CameraScannerProps {
-  /** Called when a photo is captured. Receives arrays of URIs and base64 data for front/back. */
-  onCapture: (uris: string[], base64s: string[]) => void;
-  /** Called when the user dismisses the camera (phone modal mode). */
-  onClose: () => void;
-  /** Whether to render as a full-screen modal (phone) or inline (tablet). */
-  modal?: boolean;
+export interface CapturedImage {
+  uri: string;
+  base64: string;
 }
 
-// ─── Component ──────────────────────────────────────────────────────
+interface CameraScannerProps {
+  onCapture: (uris: string[], base64s: string[]) => void;
+  onClose: () => void;
+  modal?: boolean;
+}
 
 export function CameraScanner({ onCapture, onClose, modal = false }: CameraScannerProps) {
   const cameraRef = useRef<CameraView>(null);
@@ -43,26 +31,19 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
   const [facing, setFacing] = useState<CameraType>('back');
   const [capturing, setCapturing] = useState(false);
   
-  // Step state
-  const [captureStep, setCaptureStep] = useState<'front' | 'back'>('front');
-  const [frontImage, setFrontImage] = useState<{ uri: string; base64: string } | null>(null);
+  const [images, setImages] = useState<CapturedImage[]>([]);
 
-  // Current preview state
-  const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const [previewBase64, setPreviewBase64] = useState<string | null>(null);
-
-  // ── Toggle front / back camera
   const toggleFacing = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setFacing((prev) => (prev === 'back' ? 'front' : 'back'));
   }, []);
 
-  // ── Take photo
   const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || capturing) return;
+    if (!cameraRef.current || capturing || images.length >= 2) return;
 
     setCapturing(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Added shutter sound/haptic
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
@@ -72,54 +53,40 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
       });
 
       if (photo) {
-        // Downscale image to dramatically reduce base64 payload size (avoids 429 quota/payload limits)
+        // Downscale image to dramatically reduce base64 payload size
         const manipResult = await ImageManipulator.manipulateAsync(
           photo.uri,
           [{ resize: { width: 1024 } }],
           { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
         );
 
-        setPreviewUri(manipResult.uri);
-        setPreviewBase64(manipResult.base64 ?? null);
+        setImages(prev => [
+          ...prev, 
+          { uri: manipResult.uri, base64: manipResult.base64 ?? '' }
+        ]);
       }
     } catch (err) {
       console.error('Camera capture error:', err);
     } finally {
       setCapturing(false);
     }
-  }, [capturing]);
+  }, [capturing, images.length]);
 
-  // ── Confirm the captured photo
-  const handleConfirm = useCallback(() => {
-    if (previewUri && previewBase64) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      
-      if (captureStep === 'front') {
-        // Move to step 2 (Back)
-        setFrontImage({ uri: previewUri, base64: previewBase64 });
-        setPreviewUri(null);
-        setPreviewBase64(null);
-        setCaptureStep('back');
-      } else {
-        // Complete capture (Front + Back)
-        if (frontImage) {
-          onCapture(
-            [frontImage.uri, previewUri],
-            [frontImage.base64, previewBase64]
-          );
-        }
-      }
-    }
-  }, [previewUri, previewBase64, captureStep, frontImage, onCapture]);
-
-  // ── Retake photo
-  const handleRetake = useCallback(() => {
+  const handleRemoveImage = useCallback((index: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPreviewUri(null);
-    setPreviewBase64(null);
+    setImages(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  // ── Permission states
+  const handleProcess = useCallback(() => {
+    if (images.length > 0) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      onCapture(
+        images.map(img => img.uri),
+        images.map(img => img.base64)
+      );
+    }
+  }, [images, onCapture]);
+
   if (!permission) {
     return (
       <View style={styles.centered}>
@@ -150,7 +117,6 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
     );
   }
 
-  // ── Camera / Preview content
   const content = (
     <View style={styles.container}>
       {/* Header bar */}
@@ -159,105 +125,90 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
           <Text style={styles.closeBtnText}>✕</Text>
         </Pressable>
         <Text style={styles.topBarTitle}>
-          {previewUri 
-            ? 'Review Photo' 
-            : captureStep === 'front' 
-              ? 'Step 1: Scan Front' 
-              : 'Step 2: Scan Back'}
+          Scan Medicine ({images.length}/2)
         </Text>
         <View style={styles.closeBtn} />
       </View>
 
-      {/* Camera view or photo preview */}
-      {previewUri ? (
-        <View style={styles.previewWrap}>
-          <Image
-            source={{ uri: previewUri }}
-            style={styles.previewImage}
-            resizeMode="contain"
-          />
-        </View>
-      ) : (
-        <View style={styles.cameraWrap}>
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            facing={facing}
-          />
-          {/* Viewfinder overlay — positioned as sibling, not child of CameraView */}
-          <View style={[StyleSheet.absoluteFill, styles.viewfinderOverlay]} pointerEvents="none">
-            <View style={styles.viewfinder}>
-              <View style={styles.viewfinderCornerTL} />
-              <View style={styles.viewfinderCornerTR} />
-              <View style={styles.viewfinderCornerBL} />
-              <View style={styles.viewfinderCornerBR} />
-            </View>
-            <Text style={styles.viewfinderHint}>
-              {captureStep === 'front'
-                ? 'Align front (Brand Name) within frame'
-                : 'Align back (Batch/Expiry) within frame'}
-            </Text>
+      {/* Camera view */}
+      <View style={styles.cameraWrap}>
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing={facing}
+        />
+        <View style={[StyleSheet.absoluteFill, styles.viewfinderOverlay]} pointerEvents="none">
+          <View style={styles.viewfinder}>
+            <View style={styles.viewfinderCornerTL} />
+            <View style={styles.viewfinderCornerTR} />
+            <View style={styles.viewfinderCornerBL} />
+            <View style={styles.viewfinderCornerBR} />
           </View>
+          <Text style={styles.viewfinderHint}>
+            {images.length === 0 
+              ? 'Scan Front or Back (Optional 1 of 2)' 
+              : images.length === 1 
+                ? 'Scan other side or Analyze now' 
+                : 'Maximum 2 photos reached'}
+          </Text>
         </View>
-      )}
+      </View>
 
-      {/* Bottom controls */}
-      <View style={styles.bottomBar}>
-        {previewUri ? (
-          <>
-            <PrimaryButton
-              label="↻ Retake"
-              onPress={handleRetake}
-              variant="ghost"
-              style={styles.actionBtn}
-            />
-            <PrimaryButton
-              label="✓ Use Photo"
-              onPress={handleConfirm}
-              style={styles.actionBtn}
-            />
-          </>
-        ) : (
-          <>
-            <Pressable onPress={toggleFacing} style={styles.flipBtn}>
-              <Text style={styles.flipBtnText}>🔄</Text>
-              <Text style={styles.flipBtnLabel}>
-                {facing === 'back' ? 'Front' : 'Back'}
-              </Text>
-            </Pressable>
-
-            {/* Shutter button */}
-            <Pressable
-              onPress={handleCapture}
-              disabled={capturing}
-              style={({ pressed }) => [
-                styles.shutterBtn,
-                pressed && styles.shutterBtnPressed,
-              ]}
-            >
-              {capturing ? (
-                <ActivityIndicator color="#000" size="small" />
-              ) : (
-                <View style={styles.shutterInner} />
-              )}
-            </Pressable>
-
-            <View style={styles.flipBtn} />
-          </>
+      {/* Bottom section */}
+      <View style={styles.bottomSection}>
+        {/* Thumbnails row */}
+        {images.length > 0 && (
+          <View style={styles.thumbnailRow}>
+            {images.map((img, index) => (
+              <View key={index} style={styles.thumbnailWrap}>
+                <Image source={{ uri: img.uri }} style={styles.thumbnail} />
+                <Pressable style={styles.removeBtn} onPress={() => handleRemoveImage(index)}>
+                  <Text style={styles.removeBtnText}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
         )}
+
+        {/* Controls row */}
+        <View style={styles.controlsRow}>
+          <Pressable onPress={toggleFacing} style={styles.sideBtn}>
+            <Text style={styles.sideBtnText}>🔄</Text>
+            <Text style={styles.sideBtnLabel}>Flip</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleCapture}
+            disabled={capturing || images.length >= 2}
+            style={({ pressed }) => [
+              styles.shutterBtn,
+              pressed && styles.shutterBtnPressed,
+              images.length >= 2 && { opacity: 0.5 },
+            ]}
+          >
+            {capturing ? (
+              <ActivityIndicator color="#000" size="small" />
+            ) : (
+              <View style={styles.shutterInner} />
+            )}
+          </Pressable>
+
+          {images.length > 0 ? (
+            <Pressable onPress={handleProcess} style={styles.processBtn}>
+              <Text style={styles.processBtnText}>Analyze</Text>
+              <Text style={styles.processBtnCount}>({images.length})</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.sideBtn} /> // placeholder to center shutter
+          )}
+        </View>
       </View>
     </View>
   );
 
-  // ── Render as modal or inline
   if (modal) {
     return (
-      <Modal
-        visible
-        animationType="slide"
-        presentationStyle="fullScreen"
-        onRequestClose={onClose}
-      >
+      <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
         {content}
       </Modal>
     );
@@ -265,8 +216,6 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
 
   return content;
 }
-
-// ─── Viewfinder corner helper ───────────────────────────────────────
 
 const CORNER_SIZE = 32;
 const CORNER_WIDTH = 4;
@@ -277,202 +226,116 @@ const cornerBase = {
   borderColor: COLORS.primary,
 };
 
-// ─── Styles ─────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.bg,
-  },
-
-  // Permission
+  container: { flex: 1, backgroundColor: COLORS.bg },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bg },
+  
   permissionBox: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: SPACING.xl,
+    flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', padding: SPACING.xl,
   },
-  permissionTitle: {
-    fontSize: FONT.large,
-    fontWeight: '700',
-    color: COLORS.text,
-    marginBottom: SPACING.md,
-    textAlign: 'center',
-  },
-  permissionText: {
-    fontSize: FONT.base,
-    color: COLORS.textDim,
-    textAlign: 'center',
-    marginBottom: SPACING.xl,
-    lineHeight: 26,
-  },
-  permissionBtn: {
-    marginTop: SPACING.md,
-    minWidth: 260,
-  },
+  permissionTitle: { fontSize: FONT.large, fontWeight: '700', color: COLORS.text, marginBottom: SPACING.md, textAlign: 'center' },
+  permissionText: { fontSize: FONT.base, color: COLORS.textDim, textAlign: 'center', marginBottom: SPACING.xl, lineHeight: 26 },
+  permissionBtn: { marginTop: SPACING.md, minWidth: 260 },
 
-  // Top bar
   topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    backgroundColor: COLORS.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
+    paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, 
+    backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
-  topBarTitle: {
-    fontSize: FONT.medium,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  closeBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeBtnText: {
-    fontSize: FONT.large,
-    color: COLORS.text,
-    fontWeight: '700',
-  },
+  topBarTitle: { fontSize: FONT.medium, fontWeight: '700', color: COLORS.text },
+  closeBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  closeBtnText: { fontSize: FONT.large, color: COLORS.text, fontWeight: '700' },
 
-  // Camera wrapper (camera + overlay as siblings)
-  cameraWrap: {
-    flex: 1,
-    position: 'relative',
-  },
-
-  // Overlay on top of camera (absolute fill)
-  viewfinderOverlay: {
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-
-  // Viewfinder overlay
-  viewfinder: {
-    position: 'absolute',
-    top: '20%',
-    left: '10%',
-    right: '10%',
-    bottom: '30%',
-  },
-  viewfinderCornerTL: {
-    ...cornerBase,
-    top: 0,
-    left: 0,
-    borderTopWidth: CORNER_WIDTH,
-    borderLeftWidth: CORNER_WIDTH,
-    borderTopLeftRadius: RADIUS.md,
-  },
-  viewfinderCornerTR: {
-    ...cornerBase,
-    top: 0,
-    right: 0,
-    borderTopWidth: CORNER_WIDTH,
-    borderRightWidth: CORNER_WIDTH,
-    borderTopRightRadius: RADIUS.md,
-  },
-  viewfinderCornerBL: {
-    ...cornerBase,
-    bottom: 0,
-    left: 0,
-    borderBottomWidth: CORNER_WIDTH,
-    borderLeftWidth: CORNER_WIDTH,
-    borderBottomLeftRadius: RADIUS.md,
-  },
-  viewfinderCornerBR: {
-    ...cornerBase,
-    bottom: 0,
-    right: 0,
-    borderBottomWidth: CORNER_WIDTH,
-    borderRightWidth: CORNER_WIDTH,
-    borderBottomRightRadius: RADIUS.md,
-  },
+  cameraWrap: { flex: 1, position: 'relative' },
+  viewfinderOverlay: { justifyContent: 'flex-end', alignItems: 'center' },
+  viewfinder: { position: 'absolute', top: '20%', left: '10%', right: '10%', bottom: '30%' },
+  
+  viewfinderCornerTL: { ...cornerBase, top: 0, left: 0, borderTopWidth: CORNER_WIDTH, borderLeftWidth: CORNER_WIDTH, borderTopLeftRadius: RADIUS.md },
+  viewfinderCornerTR: { ...cornerBase, top: 0, right: 0, borderTopWidth: CORNER_WIDTH, borderRightWidth: CORNER_WIDTH, borderTopRightRadius: RADIUS.md },
+  viewfinderCornerBL: { ...cornerBase, bottom: 0, left: 0, borderBottomWidth: CORNER_WIDTH, borderLeftWidth: CORNER_WIDTH, borderBottomLeftRadius: RADIUS.md },
+  viewfinderCornerBR: { ...cornerBase, bottom: 0, right: 0, borderBottomWidth: CORNER_WIDTH, borderRightWidth: CORNER_WIDTH, borderBottomRightRadius: RADIUS.md },
+  
   viewfinderHint: {
-    fontSize: FONT.base,
-    color: 'rgba(255,255,255,0.8)',
-    textAlign: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.sm,
-    marginBottom: SPACING.xl,
-    overflow: 'hidden',
+    fontSize: FONT.base, color: 'rgba(255,255,255,0.9)', textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.sm, marginBottom: SPACING.xl, overflow: 'hidden',
   },
 
-  // Preview
-  previewWrap: {
-    flex: 1,
-    backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  previewImage: {
-    width: '100%',
-    height: '100%',
-  },
-
-  // Bottom bar
-  bottomBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingVertical: SPACING.lg,
-    paddingHorizontal: SPACING.xl,
+  bottomSection: {
     backgroundColor: COLORS.surface,
+    paddingBottom: SPACING.xl,
+    paddingTop: SPACING.sm,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
-  actionBtn: {
-    flex: 1,
-    marginHorizontal: SPACING.sm,
+  
+  thumbnailRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: SPACING.md,
+    marginBottom: SPACING.md,
+    paddingHorizontal: SPACING.md,
   },
-
-  // Flip button
-  flipBtn: {
-    width: 70,
+  thumbnailWrap: {
+    width: 60,
+    height: 80,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    position: 'relative',
+  },
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+    borderRadius: RADIUS.sm,
+    opacity: 0.8,
+  },
+  removeBtn: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: COLORS.danger,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.surface,
   },
-  flipBtnText: {
-    fontSize: 24,
-  },
-  flipBtnLabel: {
-    fontSize: 13,
-    color: COLORS.textDim,
-    marginTop: 2,
-    fontWeight: '600',
+  removeBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 
-  // Shutter button
-  shutterBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 4,
-    borderColor: COLORS.primary,
+  controlsRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
+    justifyContent: 'space-around',
+    paddingHorizontal: SPACING.xl,
   },
-  shutterBtnPressed: {
-    transform: [{ scale: 0.92 }],
-  },
-  shutterInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  
+  sideBtn: { width: 80, alignItems: 'center', justifyContent: 'center' },
+  sideBtnText: { fontSize: 24 },
+  sideBtnLabel: { fontSize: 13, color: COLORS.textDim, marginTop: 2, fontWeight: '600' },
+
+  processBtn: {
+    width: 80,
+    height: 48,
     backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  processBtnText: { color: COLORS.bg, fontSize: 14, fontWeight: 'bold' },
+  processBtnCount: { color: COLORS.bg, fontSize: 12, fontWeight: '600' },
+
+  shutterBtn: {
+    width: 72, height: 72, borderRadius: 36, borderWidth: 4, borderColor: COLORS.primary,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent',
+  },
+  shutterBtnPressed: { transform: [{ scale: 0.92 }] },
+  shutterInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: COLORS.primary },
 });
