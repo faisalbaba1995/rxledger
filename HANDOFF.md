@@ -21,6 +21,6 @@ We created an implementation plan for this, but haven't started coding it. Here 
 1. Update `CameraScanner.tsx` to return `base64: true` when `takePictureAsync` is called.
 2. Build `src/lib/ocrService.ts` to call the Gemini 1.5 Flash API directly from the client using `fetch` (the user will provide the API key as `EXPO_PUBLIC_GEMINI_API_KEY` in `.env`).
 3. Update `handleScan` in `app/(tabs)/sales.tsx` to use the OCR service.
-4. **Crucial:** Because the database is currently empty (no Marg data imported), your logic must *auto-create* a mock `inventory_items` record and a `batch_records` record using the OCR'd data (e.g., set a mock MRP of 10.00) so the sale can actually be added to the cart and processed. 
+4. **Crucial:** The user explicitly requested **NOT** to insert any fake medicines into the database. For now, the OCR pipeline should just process the image and display the extracted results (Medicine Name, Batch, Expiry) in a temporary Alert or Bottom Sheet on the screen. The goal right now is purely to test the OCR performance on the camera images before wiring it up to the database.
 
 *Start by reading `app/(tabs)/sales.tsx` and `src/components/CameraScanner.tsx`, then proceed with the OCR implementation!*
