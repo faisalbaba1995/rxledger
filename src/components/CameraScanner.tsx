@@ -8,7 +8,10 @@ import {
   Modal,
   Image,
 } from 'react-native';
-import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
+import { useCameraDevice, useCameraPermission, Camera as BaseCamera } from 'react-native-vision-camera';
+import { Camera } from 'react-native-vision-camera-ocr-plus';
+import type { Text as OCRText } from 'react-native-vision-camera-ocr-plus/lib/typescript/src/types';
+
 import * as Haptics from 'expo-haptics';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { COLORS, FONT, SPACING, RADIUS } from '../constants/theme';
@@ -26,12 +29,14 @@ interface CameraScannerProps {
 }
 
 export function CameraScanner({ onCapture, onClose, modal = false }: CameraScannerProps) {
-  const cameraRef = useRef<CameraView>(null);
-  const [permission, requestPermission] = useCameraPermissions();
-  const [facing, setFacing] = useState<CameraType>('back');
-  const [capturing, setCapturing] = useState(false);
+  const cameraRef = useRef<React.ElementRef<typeof BaseCamera>>(null);
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const [facing, setFacing] = useState<'back' | 'front'>('back');
+  const device = useCameraDevice(facing);
   
+  const [capturing, setCapturing] = useState(false);
   const [images, setImages] = useState<CapturedImage[]>([]);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
 
   const toggleFacing = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -46,24 +51,26 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 1,
-        base64: false,
-        skipProcessing: true,
+      const photo = await (cameraRef.current as any).takePhoto({
+        qualityPrioritization: 'speed',
+        enableShutterSound: true,
       });
 
       if (photo) {
         // Downscale image to dramatically reduce base64 payload size
         const manipResult = await ImageManipulator.manipulateAsync(
-          photo.uri,
+          `file://${photo.path}`,
           [{ resize: { width: 1024 } }],
           { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
         );
 
-        setImages(prev => [
-          ...prev, 
-          { uri: manipResult.uri, base64: manipResult.base64 ?? '' }
-        ]);
+        setImages(prev => {
+          const newImages = [...prev, { uri: manipResult.uri, base64: manipResult.base64 ?? '' }];
+          if (newImages.length >= 2) {
+             setAutoCaptureEnabled(false);
+          }
+          return newImages;
+        });
       }
     } catch (err) {
       console.error('Camera capture error:', err);
@@ -72,9 +79,38 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
     }
   }, [capturing, images.length]);
 
+  const triggerCapture = useCallback(async () => {
+    if (autoCaptureEnabled && !capturing && images.length < 2) {
+      console.log('Auto-capturing due to high text density!');
+      setAutoCaptureEnabled(false);
+      await handleCapture();
+      // Re-enable auto capture after a delay if we still need more images
+      setTimeout(() => {
+        setAutoCaptureEnabled(true);
+      }, 2000);
+    }
+  }, [autoCaptureEnabled, capturing, images.length, handleCapture]);
+
+  const handleTextRecognized = useCallback((data: string | OCRText) => {
+    if (!autoCaptureEnabled) return;
+    
+    const textData = data as OCRText;
+    if (textData && textData.resultText) {
+       if (textData.resultText.length > 40) {
+          triggerCapture();
+       }
+    }
+  }, [autoCaptureEnabled, triggerCapture]);
+
   const handleRemoveImage = useCallback((index: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setImages(prev => prev.filter((_, i) => i !== index));
+    setImages(prev => {
+      const newImages = prev.filter((_, i) => i !== index);
+      if (newImages.length < 2) {
+        setAutoCaptureEnabled(true);
+      }
+      return newImages;
+    });
   }, []);
 
   const handleProcess = useCallback(() => {
@@ -87,7 +123,7 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
     }
   }, [images, onCapture]);
 
-  if (!permission) {
+  if (hasPermission === null) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={COLORS.primary} />
@@ -95,7 +131,7 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
     );
   }
 
-  if (!permission.granted) {
+  if (!hasPermission) {
     return (
       <View style={styles.permissionBox}>
         <Text style={styles.permissionTitle}>📷 Camera Access Required</Text>
@@ -132,11 +168,24 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
 
       {/* Camera view */}
       <View style={styles.cameraWrap}>
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing={facing}
-        />
+        {!!device ? (
+          <Camera
+            ref={cameraRef}
+            // @ts-ignore - The plugin's wrapper doesn't type 'style' properly
+            style={StyleSheet.absoluteFill}
+            device={device}
+            isActive={true}
+            photo={true}
+            mode="recognize"
+            options={{ language: 'latin' }}
+            callback={handleTextRecognized}
+          />
+        ) : (
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={{color: COLORS.textDim, marginTop: SPACING.md}}>Initializing Camera...</Text>
+          </View>
+        )}
         <View style={[StyleSheet.absoluteFill, styles.viewfinderOverlay]} pointerEvents="none">
           <View style={styles.viewfinder}>
             <View style={styles.viewfinderCornerTL} />
@@ -146,7 +195,7 @@ export function CameraScanner({ onCapture, onClose, modal = false }: CameraScann
           </View>
           <Text style={styles.viewfinderHint}>
             {images.length === 0 
-              ? 'Scan Front or Back (Optional 1 of 2)' 
+              ? 'Scan Front or Back (Auto-Captures Text)' 
               : images.length === 1 
                 ? 'Scan other side or Analyze now' 
                 : 'Maximum 2 photos reached'}

@@ -18,20 +18,21 @@
         "CAMERA",
         "INTERNET"
       ],
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.faisalbaba08.rxledger"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router",
-      "expo-splash-screen",
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "RxLedger needs camera access to scan medicine strips for batch and expiry information."
-        }
-      ]
-    ]
+      "expo-splash-screen"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b0b11db1-2bf9-47d6-b6ae-9c3eabfd888e"
+      }
+    }
   }
 }

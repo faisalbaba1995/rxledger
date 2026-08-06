@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" width="200" height="240">
+  <defs>
+    <linearGradient id="pillGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9B30FF"/>
+      <stop offset="100%" stop-color="#4D7CFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Capsule/Pill shape (vertical, outline style) -->
+  <path
+    d="M100,20 C72,20 50,42 50,70 L50,120 C50,148 72,170 100,170 C128,170 150,148 150,120 L150,70 C150,42 128,20 100,20 Z"
+    fill="none"
+    stroke="url(#pillGradient)"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Horizontal divider line through the capsule center -->
+  <line
+    x1="50" y1="95"
+    x2="150" y2="95"
+    stroke="url(#pillGradient)"
+    stroke-width="10"
+    stroke-linecap="round"
+  />
+
+  <!-- Plus sign (+) to the right of capsule -->
+  <!-- Vertical bar of plus -->
+  <line
+    x1="168" y1="45"
+    x2="168" y2="75"
+    stroke="#9B30FF"
+    stroke-width="8"
+    stroke-linecap="round"
+  />
+  <!-- Horizontal bar of plus -->
+  <line
+    x1="153" y1="60"
+    x2="183" y2="60"
+    stroke="#9B30FF"
+    stroke-width="8"
+    stroke-linecap="round"
+  />
+
+  <!-- "RX LEDGER" text -->
+  <text
+    x="100" y="215"
+    text-anchor="middle"
+    font-family="Inter, Helvetica, Arial, sans-serif"
+    font-weight="800"
+    font-size="30"
+    letter-spacing="5"
+    fill="#111111"
+  >RX LEDGER</text>
+</svg>

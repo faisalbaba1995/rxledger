@@ -1,15 +1,17 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONT, SPACING, RADIUS, TOUCH_TARGET_MIN } from '../../src/constants/theme';
 import { ListRow } from '../../src/components/ListRow';
+import { PurchaseBillScanner } from '../../src/components/PurchaseBillScanner';
 import { useInventory } from '../../src/hooks/useInventory';
 import type { InventoryDisplayItem } from '../../src/hooks/useInventory';
 
 export default function StockScreen() {
   const { items, loading, error, refresh } = useInventory();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showBillScanner, setShowBillScanner] = useState(false);
 
   const toggleExpand = useCallback((id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -72,8 +74,19 @@ export default function StockScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <View style={styles.topBar}>
-        <Text style={styles.header}>Inventory</Text>
-        <Text style={styles.count}>{items.length} medicines</Text>
+        <View>
+          <Text style={styles.header}>Inventory</Text>
+          <Text style={styles.count}>{items.length} medicines</Text>
+        </View>
+        <Pressable
+          style={styles.scanBillBtn}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            setShowBillScanner(true);
+          }}
+        >
+          <Text style={styles.scanBillBtnText}>📄 Scan Purchase Bill</Text>
+        </Pressable>
       </View>
 
       {error ? (
@@ -93,6 +106,12 @@ export default function StockScreen() {
           }
         />
       )}
+
+      <PurchaseBillScanner
+        visible={showBillScanner}
+        onClose={() => setShowBillScanner(false)}
+        onStockAdded={refresh}
+      />
     </SafeAreaView>
   );
 }
@@ -108,7 +127,18 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   header: { fontSize: FONT.header, fontWeight: '800', color: COLORS.text },
-  count: { fontSize: FONT.base, color: COLORS.textDim },
+  count: { fontSize: FONT.base, color: COLORS.textDim, marginTop: 2 },
+  scanBillBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.md,
+  },
+  scanBillBtnText: {
+    fontSize: FONT.base,
+    fontWeight: '700',
+    color: COLORS.bg,
+  },
   list: { paddingBottom: 100 },
   batchList: {
     backgroundColor: COLORS.surfaceElevated,
